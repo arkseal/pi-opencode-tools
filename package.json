@@ -1,0 +1,31 @@
+{
+  "name": "pi-opencode-tools",
+  "version": "1.0.0",
+  "description": "Ultra-lean glob, grep, and background bash tools for Pi coding agent with minimal token impact",
+  "type": "module",
+  "main": "./src/index.ts",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "glob",
+    "grep",
+    "bash",
+    "background-tasks",
+    "token-optimization"
+  ],
+  "author": "arkseal",
+  "license": "MIT",
+  "scripts": {
+    "test": "bun test tests/**/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
