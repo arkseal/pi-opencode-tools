@@ -6,12 +6,15 @@ Ultra-lean `glob`, `grep`, and `bash` (with detached background execution) tools
 
 - **`glob`**:
   - Only **2 parameters** (`pattern`, `path`), saving ~400 prompt tokens per turn compared to 14-parameter alternatives.
+  - Automatically skips dependency and environment directories (`node_modules`, `.venv`, `venv`, `env`, `__pycache__`, etc.) unless explicitly stated in `path` or `pattern`.
   - Caps output at 100 matches to prevent runaway context consumption.
   - Outputs concise paths relative to the current working directory.
 
 - **`grep`**:
   - Only **3 parameters** (`pattern`, `path`, `include`).
-  - Fast ripgrep (`rg`) backend.
+  - Fast ripgrep (`rg`) backend with high-performance native filesystem fallback.
+  - Automatically skips binary files and `.zip` archives (by extension, MIME/magic headers, and NUL byte sniffing).
+  - Automatically skips dependency and environment directories (`node_modules`, `.venv`, `venv`, `env`, `__pycache__`, etc.) unless explicitly stated in `path` or `include`.
   - Cleanly groups matches by file with 1-based line numbers.
   - Caps at 100 matches with an explicit truncation indicator.
 

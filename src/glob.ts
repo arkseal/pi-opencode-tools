@@ -2,6 +2,12 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { promisify } from "node:util";
+import {
+  DEFAULT_IGNORED_DIRS,
+  getExplicitDirs,
+  shouldSkipDir,
+  globToRegex,
+} from "./filters.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,14 +46,25 @@ export async function executeGlob(
     throw err;
   }
 
+  const explicitDirs = getExplicitDirs(params.path, params.pattern);
+
   const args = [
     "--files",
     "--glob",
     params.pattern,
     "--hidden",
     "--glob",
+    "!**/.git/**",
+    "--glob",
     "!.git/**",
   ];
+
+  for (const envDir of DEFAULT_IGNORED_DIRS) {
+    if (!explicitDirs.has(envDir)) {
+      args.push("--glob", `!**/${envDir}/**`);
+      args.push("--glob", `!${envDir}/**`);
+    }
+  }
 
   let stdout = "";
   try {
@@ -62,7 +79,7 @@ export async function executeGlob(
       stdout = "";
     } else {
       // Fallback if rg is not present: simple fs walk
-      stdout = await fallbackFsGlob(targetDir, params.pattern);
+      stdout = await fallbackFsGlob(targetDir, params.pattern, explicitDirs);
     }
   }
 
@@ -71,10 +88,20 @@ export async function executeGlob(
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const matchedPaths = rawLines.map((file) => {
-    const absPath = path.isAbsolute(file) ? file : path.resolve(targetDir, file);
-    return path.relative(directory, absPath).replaceAll("\\", "/");
-  });
+  const matchedPaths = rawLines
+    .map((file) => {
+      const absPath = path.isAbsolute(file) ? file : path.resolve(targetDir, file);
+      return path.relative(directory, absPath).replaceAll("\\", "/");
+    })
+    .filter((filePath) => {
+      const segments = filePath.split("/");
+      for (const segment of segments) {
+        if (shouldSkipDir(segment, explicitDirs)) {
+          return false;
+        }
+      }
+      return true;
+    });
 
   const count = matchedPaths.length;
   if (count === 0) {
@@ -105,7 +132,11 @@ export async function executeGlob(
   };
 }
 
-async function fallbackFsGlob(dir: string, pattern: string): Promise<string> {
+async function fallbackFsGlob(
+  dir: string,
+  pattern: string,
+  explicitDirs: Set<string>
+): Promise<string> {
   const matches: string[] = [];
   const regex = globToRegex(pattern);
 
@@ -115,6 +146,7 @@ async function fallbackFsGlob(dir: string, pattern: string): Promise<string> {
       if (entry.name === ".git") continue;
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
+        if (shouldSkipDir(entry.name, explicitDirs)) continue;
         await walk(full);
       } else if (entry.isFile()) {
         const rel = path.relative(dir, full).replaceAll("\\", "/");
@@ -127,13 +159,4 @@ async function fallbackFsGlob(dir: string, pattern: string): Promise<string> {
 
   await walk(dir);
   return matches.join("\n");
-}
-
-function globToRegex(glob: string): RegExp {
-  let escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, ".*")
-    .replace(/\*(?!\*)/g, "[^/]*")
-    .replace(/\?/g, ".");
-  return new RegExp(`^${escaped}$`, "i");
 }

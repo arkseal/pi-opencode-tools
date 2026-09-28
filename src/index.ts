@@ -7,6 +7,7 @@ import { executeBash, executeTaskLogs } from "./bash.js";
 export { executeGlob } from "./glob.js";
 export { executeGrep } from "./grep.js";
 export { executeBash, executeTaskLogs } from "./bash.js";
+export * from "./filters.js";
 
 export default function opencodeToolsExtension(pi: ExtensionAPI) {
   // 1. Glob tool - 2 parameters (minimal token schema)

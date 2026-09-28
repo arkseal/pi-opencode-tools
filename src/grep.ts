@@ -2,6 +2,14 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { promisify } from "node:util";
+import {
+  BINARY_EXTENSIONS,
+  DEFAULT_IGNORED_DIRS,
+  getExplicitDirs,
+  shouldSkipDir,
+  isBinaryOrZip,
+  globToRegex,
+} from "./filters.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,8 +47,9 @@ export async function executeGrep(
       : path.resolve(directory, params.path)
     : directory;
 
+  let stat;
   try {
-    await fs.stat(requestedPath);
+    stat = await fs.stat(requestedPath);
   } catch (err: any) {
     if (err.code === "ENOENT") {
       throw new Error(`Path does not exist: ${requestedPath}`);
@@ -48,14 +57,42 @@ export async function executeGrep(
     throw err;
   }
 
+  // If the target path itself is a file, skip if it's binary or a .zip file
+  if (stat.isFile()) {
+    if (await isBinaryOrZip(requestedPath)) {
+      return {
+        title: params.pattern,
+        matches: 0,
+        truncated: false,
+        output: "No files found",
+      };
+    }
+  }
+
+  const explicitDirs = getExplicitDirs(params.path, params.include);
+
   const args = [
     "-n",
     "--color=never",
     "--no-heading",
     "--hidden",
+    "--no-binary",
+    "--glob",
+    "!**/.git/**",
     "--glob",
     "!.git/**",
+    "--glob",
+    "!*.zip",
+    "--glob",
+    "!**/*.zip",
   ];
+
+  for (const envDir of DEFAULT_IGNORED_DIRS) {
+    if (!explicitDirs.has(envDir)) {
+      args.push("--glob", `!**/${envDir}/**`);
+      args.push("--glob", `!${envDir}/**`);
+    }
+  }
 
   if (params.include) {
     args.push("-g", params.include);
@@ -75,7 +112,7 @@ export async function executeGrep(
     if (err?.code === 1) {
       stdout = "";
     } else {
-      stdout = await fallbackFsGrep(requestedPath, directory, params);
+      stdout = await fallbackFsGrep(requestedPath, directory, params, explicitDirs);
     }
   }
 
@@ -94,6 +131,23 @@ export async function executeGrep(
       ? filePath
       : path.resolve(directory, filePath);
     const relPath = path.relative(directory, absPath).replaceAll("\\", "/");
+
+    // Skip if binary or zip by extension
+    const ext = path.extname(relPath).toLowerCase();
+    if (BINARY_EXTENSIONS.has(ext)) {
+      continue;
+    }
+
+    // Skip if matched inside an ignored env directory
+    const segments = relPath.split("/");
+    let skip = false;
+    for (const segment of segments) {
+      if (shouldSkipDir(segment, explicitDirs)) {
+        skip = true;
+        break;
+      }
+    }
+    if (skip) continue;
 
     matches.push({
       filePath: relPath,
@@ -147,14 +201,39 @@ export async function executeGrep(
 async function fallbackFsGrep(
   targetPath: string,
   rootDirectory: string,
-  params: GrepParams
+  params: GrepParams,
+  explicitDirs: Set<string>
 ): Promise<string> {
   const results: string[] = [];
   const regex = new RegExp(params.pattern);
+  let quickTestRegex: RegExp | null = null;
+  try {
+    quickTestRegex = new RegExp(params.pattern, "m");
+  } catch {
+    quickTestRegex = null;
+  }
+  const includeRegex = params.include ? globToRegex(params.include) : null;
 
   async function searchFile(filePath: string) {
+    if (includeRegex) {
+      const fileName = path.basename(filePath);
+      const rel = path.relative(rootDirectory, filePath).replaceAll("\\", "/");
+      if (!includeRegex.test(fileName) && !includeRegex.test(rel)) {
+        return;
+      }
+    }
+
+    if (await isBinaryOrZip(filePath)) {
+      return;
+    }
+
     try {
       const content = await fs.readFile(filePath, "utf-8");
+      // Fast pre-check before splitting into lines
+      if (quickTestRegex && !quickTestRegex.test(content)) {
+        return;
+      }
+
       const lines = content.split("\n");
       for (let i = 0; i < lines.length; i++) {
         if (regex.test(lines[i])) {
@@ -162,7 +241,7 @@ async function fallbackFsGrep(
         }
       }
     } catch {
-      // ignore binary / unreadable
+      // ignore unreadable
     }
   }
 
@@ -176,6 +255,7 @@ async function fallbackFsGrep(
         if (entry.name === ".git") continue;
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
+          if (shouldSkipDir(entry.name, explicitDirs)) continue;
           await walk(full);
         } else if (entry.isFile()) {
           await searchFile(full);

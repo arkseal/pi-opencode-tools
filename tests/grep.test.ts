@@ -10,6 +10,10 @@ describe("grep tool", () => {
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "grep-test-"));
     await fs.mkdir(path.join(tempDir, "src"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "node_modules", "pkg"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, ".venv", "lib"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "venv", "bin"), { recursive: true });
+
     await fs.writeFile(
       path.join(tempDir, "src", "app.ts"),
       "function start() {\n  console.log('Starting server');\n  const port = 8080;\n  console.log('Server ready on port', port);\n}\n"
@@ -22,6 +26,37 @@ describe("grep tool", () => {
       path.join(tempDir, "src", "config.json"),
       '{\n  "server": "localhost",\n  "log": true\n}\n'
     );
+
+    // Dependencies and environments containing matching text
+    await fs.writeFile(
+      path.join(tempDir, "node_modules", "pkg", "dep.ts"),
+      "console.log('Inside dependency package');\n"
+    );
+    await fs.writeFile(
+      path.join(tempDir, ".venv", "lib", "site.py"),
+      "# console.log in python venv\n"
+    );
+    await fs.writeFile(
+      path.join(tempDir, "venv", "bin", "activate.py"),
+      "# console.log in venv\n"
+    );
+
+    // Binary and zip files containing matching text
+    // Zip file header (PK\x03\x04) with matching text embedded
+    const zipBuffer = Buffer.concat([
+      Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]),
+      Buffer.from("console.log('in zip file')\n"),
+    ]);
+    await fs.writeFile(path.join(tempDir, "archive.zip"), zipBuffer);
+
+    // Binary file with NUL byte and matching text
+    const binaryBuffer = Buffer.concat([
+      Buffer.from([0x00, 0x01, 0x02, 0xff]),
+      Buffer.from("console.log('in binary file')\n"),
+    ]);
+    await fs.writeFile(path.join(tempDir, "data.bin"), binaryBuffer);
+    await fs.writeFile(path.join(tempDir, "image.png"), binaryBuffer);
+    await fs.writeFile(path.join(tempDir, "custom.unknown"), binaryBuffer);
   });
 
   afterEach(async () => {
@@ -51,6 +86,56 @@ describe("grep tool", () => {
     const result = await executeGrep({ pattern: "nonexistent_pattern_123" }, tempDir);
     expect(result.matches).toBe(0);
     expect(result.output).toBe("No files found");
+  });
+
+  it("skips node_modules, .venv, venv, and binary/zip files by default", async () => {
+    const result = await executeGrep({ pattern: "console\\.log" }, tempDir);
+    expect(result.matches).toBe(3);
+    expect(result.output).not.toContain("node_modules");
+    expect(result.output).not.toContain(".venv");
+    expect(result.output).not.toContain("venv");
+    expect(result.output).not.toContain("archive.zip");
+    expect(result.output).not.toContain("data.bin");
+    expect(result.output).not.toContain("image.png");
+    expect(result.output).not.toContain("custom.unknown");
+  });
+
+  it("skips binary or zip file when passed directly as path", async () => {
+    const zipResult = await executeGrep({ pattern: "console\\.log", path: "archive.zip" }, tempDir);
+    expect(zipResult.matches).toBe(0);
+    expect(zipResult.output).toBe("No files found");
+
+    const binResult = await executeGrep({ pattern: "console\\.log", path: "data.bin" }, tempDir);
+    expect(binResult.matches).toBe(0);
+    expect(binResult.output).toBe("No files found");
+  });
+
+  it("searches node_modules when explicitly specified in path", async () => {
+    const result = await executeGrep(
+      { pattern: "console\\.log", path: "node_modules/pkg" },
+      tempDir
+    );
+    expect(result.matches).toBe(1);
+    expect(result.output).toContain("node_modules/pkg/dep.ts:");
+    expect(result.output).toContain("Inside dependency package");
+  });
+
+  it("searches node_modules when explicitly specified in include", async () => {
+    const result = await executeGrep(
+      { pattern: "console\\.log", include: "node_modules/**" },
+      tempDir
+    );
+    expect(result.matches).toBe(1);
+    expect(result.output).toContain("node_modules/pkg/dep.ts:");
+  });
+
+  it("searches .venv when explicitly specified in path", async () => {
+    const result = await executeGrep(
+      { pattern: "console\\.log", path: ".venv" },
+      tempDir
+    );
+    expect(result.matches).toBe(1);
+    expect(result.output).toContain(".venv/lib/site.py:");
   });
 
   it("truncates at limit and appends notice", async () => {
