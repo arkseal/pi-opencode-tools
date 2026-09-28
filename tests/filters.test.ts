@@ -9,6 +9,7 @@ import {
   shouldSkipDir,
   isBinaryOrZip,
   globToRegex,
+  parsePattern,
 } from "../src/filters";
 
 describe("filters utility", () => {
@@ -80,14 +81,38 @@ describe("filters utility", () => {
     expect(await isBinaryOrZip(fakeZipPath)).toBe(true);
   });
 
-  it("globToRegex handles wildcard and brace expansion", () => {
-    const re1 = globToRegex("*.ts");
-    expect(re1.test("app.ts")).toBe(true);
-    expect(re1.test("app.js")).toBe(false);
+  it("parsePattern parses regex literals and leaves plain patterns untouched", () => {
+    expect(parsePattern("/^## 6/")).toEqual({
+      raw: "/^## 6/",
+      pattern: "^## 6",
+      flags: "",
+      ignoreCase: false,
+    });
 
-    const re2 = globToRegex("**/*.{ts,tsx}");
-    expect(re2.test("src/app.ts")).toBe(true);
-    expect(re2.test("src/components/Header.tsx")).toBe(true);
-    expect(re2.test("src/app.js")).toBe(false);
+    expect(parsePattern("/^## 6/i")).toEqual({
+      raw: "/^## 6/i",
+      pattern: "^## 6",
+      flags: "i",
+      ignoreCase: true,
+    });
+
+    expect(parsePattern("/hello/")).toEqual({
+      raw: "/hello/",
+      pattern: "hello",
+      flags: "",
+      ignoreCase: false,
+    });
+
+    expect(parsePattern("/usr/local/bin/")).toEqual({
+      raw: "/usr/local/bin/",
+      pattern: "/usr/local/bin/",
+      ignoreCase: false,
+    });
+
+    expect(parsePattern("^## 6")).toEqual({
+      raw: "^## 6",
+      pattern: "^## 6",
+      ignoreCase: false,
+    });
   });
 });

@@ -9,6 +9,8 @@ import {
   shouldSkipDir,
   isBinaryOrZip,
   globToRegex,
+  parsePattern,
+  type ParsedPattern,
 } from "./filters.js";
 
 const execFileAsync = promisify(execFile);
@@ -40,6 +42,8 @@ export async function executeGrep(
   if (!params.pattern) {
     throw new Error("pattern is required");
   }
+
+  const parsed = parsePattern(params.pattern);
 
   const requestedPath = params.path
     ? path.isAbsolute(params.path)
@@ -73,6 +77,7 @@ export async function executeGrep(
 
   const args = [
     "-n",
+    "-H",
     "--color=never",
     "--no-heading",
     "--hidden",
@@ -87,6 +92,10 @@ export async function executeGrep(
     "!**/*.zip",
   ];
 
+  if (parsed.ignoreCase) {
+    args.push("-i");
+  }
+
   for (const envDir of DEFAULT_IGNORED_DIRS) {
     if (!explicitDirs.has(envDir)) {
       args.push("--glob", `!**/${envDir}/**`);
@@ -98,7 +107,7 @@ export async function executeGrep(
     args.push("-g", params.include);
   }
 
-  args.push("-e", params.pattern);
+  args.push("-e", parsed.pattern);
   args.push(requestedPath);
 
   let stdout = "";
@@ -112,7 +121,7 @@ export async function executeGrep(
     if (err?.code === 1) {
       stdout = "";
     } else {
-      stdout = await fallbackFsGrep(requestedPath, directory, params, explicitDirs);
+      stdout = await fallbackFsGrep(requestedPath, directory, params, explicitDirs, parsed);
     }
   }
 
@@ -123,7 +132,7 @@ export async function executeGrep(
     if (!rawLine.trim()) continue;
 
     // rg output format: <file>:<line>:<content>
-    const match = rawLine.match(/^([^:]+):(\d+):(.*)$/);
+    const match = rawLine.match(/^((?:[a-zA-Z]:)?[^:]+):(\d+):(.*)$/);
     if (!match) continue;
 
     const [, filePath, lineStr, text] = match;
@@ -202,13 +211,15 @@ async function fallbackFsGrep(
   targetPath: string,
   rootDirectory: string,
   params: GrepParams,
-  explicitDirs: Set<string>
+  explicitDirs: Set<string>,
+  parsed: ParsedPattern
 ): Promise<string> {
   const results: string[] = [];
-  const regex = new RegExp(params.pattern);
+  const regexFlags = parsed.ignoreCase ? "i" : "";
+  const regex = new RegExp(parsed.pattern, regexFlags);
   let quickTestRegex: RegExp | null = null;
   try {
-    quickTestRegex = new RegExp(params.pattern, "m");
+    quickTestRegex = new RegExp(parsed.pattern, `m${regexFlags}`);
   } catch {
     quickTestRegex = null;
   }

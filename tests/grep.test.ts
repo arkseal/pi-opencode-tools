@@ -138,6 +138,39 @@ describe("grep tool", () => {
     expect(result.output).toContain(".venv/lib/site.py:");
   });
 
+  it("searches single file target with filename prefix", async () => {
+    const result = await executeGrep(
+      { pattern: "console\\.log", path: "src/app.ts" },
+      tempDir
+    );
+    expect(result.matches).toBe(2);
+    expect(result.output).toContain("src/app.ts:");
+    expect(result.output).toContain("Line 2:   console.log('Starting server');");
+  });
+
+  it("supports regex literal format /^pattern/ and flags", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "docs.md"),
+      "# Introduction\n\n## 6 Specification\n\nDetails here.\n"
+    );
+
+    const result = await executeGrep(
+      { pattern: "/^## 6/", path: "docs.md" },
+      tempDir
+    );
+    expect(result.matches).toBe(1);
+    expect(result.output).toContain("docs.md:");
+    expect(result.output).toContain("Line 3: ## 6 Specification");
+
+    // Case insensitive regex literal
+    const caseResult = await executeGrep(
+      { pattern: "/## 6 specification/i", path: "docs.md" },
+      tempDir
+    );
+    expect(caseResult.matches).toBe(1);
+    expect(caseResult.output).toContain("Line 3: ## 6 Specification");
+  });
+
   it("truncates at limit and appends notice", async () => {
     const lines = [];
     for (let i = 0; i < 120; i++) {

@@ -229,3 +229,38 @@ export function globToRegex(glob: string): RegExp {
   }
   return new RegExp(`^${res}$`, "i");
 }
+
+export interface ParsedPattern {
+  raw: string;
+  pattern: string;
+  flags?: string;
+  ignoreCase?: boolean;
+}
+
+export function parsePattern(input: string): ParsedPattern {
+  const trimmed = input.trim();
+  const match = trimmed.match(/^\/(.+)\/([a-z]*)$/);
+  if (match) {
+    const inner = match[1];
+    const flags = match[2];
+    if (/^[gimsuy]*$/.test(flags)) {
+      const hasRegexMeta = /[\\^$*+?()[\]{}|]/.test(inner);
+      const isPath = inner.includes("/") && !hasRegexMeta && flags === "";
+      if (!isPath) {
+        return {
+          raw: input,
+          pattern: inner,
+          flags,
+          ignoreCase: flags.includes("i"),
+        };
+      }
+    }
+  }
+
+  return {
+    raw: input,
+    pattern: input,
+    ignoreCase: false,
+  };
+}
+
