@@ -128,30 +128,66 @@ export async function executeBash(
 
   // Synchronous execution
   const timeoutMs = (params.timeout ?? 60) * 1000;
-  try {
-    const { stdout, stderr } = await execAsync(command, {
+  return new Promise<BashResult>((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let timer: NodeJS.Timeout | null = null;
+    let timedOut = false;
+
+    const child = spawn(command, {
       cwd,
-      timeout: timeoutMs,
-      maxBuffer: 20 * 1024 * 1024,
       shell: "/bin/bash",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
     });
 
-    const output = [stdout, stderr].filter(Boolean).join("\n");
-    return {
-      exitCode: 0,
-      background: false,
-      output: output.trim() || "(Command completed with empty output)",
-    };
-  } catch (err: any) {
-    const stdout = err.stdout ?? "";
-    const stderr = err.stderr ?? "";
-    const output = [stdout, stderr].filter(Boolean).join("\n") || err.message;
-    return {
-      exitCode: err.code ?? 1,
-      background: false,
-      output: output.trim(),
-    };
-  }
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+        }, 2000).unref();
+      }, timeoutMs);
+    }
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      resolve({
+        exitCode: 1,
+        background: false,
+        output: err.message,
+      });
+    });
+
+    child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        resolve({
+          exitCode: 124,
+          background: false,
+          output: `Command timed out after ${params.timeout ?? 60} seconds`,
+        });
+        return;
+      }
+      const output = [stdout, stderr].filter(Boolean).join("\n");
+      resolve({
+        exitCode: code ?? 0,
+        background: false,
+        output: output.trim() || "(Command completed with empty output)",
+      });
+    });
+  });
 }
 
 export async function executeTaskLogs(
